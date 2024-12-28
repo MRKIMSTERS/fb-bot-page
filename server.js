@@ -1,171 +1,212 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const axios = require('axios');
-const path = require('path');
-const { GPTx } = require('@ruingl/gptx');
+const request = require('request');
+const axios = require('axios'); 
+
 const app = express();
-
-const gptx = new GPTx({
-    provider: 'Nextway',
-    model: 'gpt-4o-free'
-});
-
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const VERIFY_TOKEN = 'lorex';
-const PORT = process.env.PORT || 3000;
-
-const conversationHistory = {};
-const imageHistory = {};
-
 app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.use(express.static('public'));
+
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN; 
+const VERIFY_TOKEN = "lorex";
+
+let imageHistory = {};
 
 app.get('/webhook', (req, res) => {
-    const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    if (mode && token) {
-        if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-            console.log('WEBHOOK VERIFIED');
-            res.status(200).send(challenge);
-        } else {
-            res.sendStatus(403);
-        }
+    if (token === VERIFY_TOKEN) {
+        res.status(200).send(challenge);
+    } else {
+        res.status(403).send('Verification failed.');
     }
 });
 
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
     const body = req.body;
 
     if (body.object === 'page') {
-        body.entry.forEach(async (entry) => {
-            const webhookEvent = entry.messaging[0];
+        await Promise.all(
+            body.entry.map(async (entry) => {
+                const webhookEvent = entry.messaging[0];
+                const senderId = webhookEvent.sender.id;
+                const message = webhookEvent.message;
+                const attachments = message?.attachments;
 
-            const senderId = webhookEvent.sender.id;
+                if (message) {
+                    if (attachments && attachments[0].type === 'image') {
+                        const imageUrl = attachments[0].payload.url;
+                        imageHistory[senderId] = imageUrl; 
 
-            if (webhookEvent.message) {
-                await handleMessage(senderId, webhookEvent.message);
-            }
-        });
+                        const response = {
+                            text: 'Image received! Now, you can use the "/gemini" command with any prompt to analyze the image.'
+                        };
+                        sendMessage(senderId, response);
+                        return;
+                    }
+
+                    const receivedMessage = message.text;
+
+                    markAsSeen(senderId);
+
+                    if (receivedMessage.startsWith('/gemini')) {
+                        const prompt = receivedMessage.replace('/gemini', '').trim();
+
+                        const imageUrl = imageHistory[senderId];
+                        if (imageUrl) {
+                            analyzeImageWithGemini(senderId, prompt, imageUrl);
+                        } else {
+                            sendMessage(senderId, "No image found. Please send an image first.");
+                        }
+                    } else if (receivedMessage.startsWith('/play')) {
+                        const args = receivedMessage.split(' ').slice(1);
+                        playSong(senderId, args);
+                    } else if (receivedMessage.startsWith('/imagine')) {
+                        const prompt = receivedMessage.replace('/imagine', '').trim();
+                        generateImage(senderId, prompt);
+                    } else {
+                        const apiUrl = `https://kaiz-apis.gleeze.com/api/gpt-4o?q=${encodeURIComponent(receivedMessage)}&uid=${senderId}`;
+                        request(apiUrl, { json: true }, (error, response, body) => {
+                            if (!error && body.response) {
+                                const reply = `${body.response}`;
+                                sendMessage(senderId, reply);
+                            } else {
+                                console.error("API error:", error || body);
+                                sendMessage(senderId, "Sorry, I couldn't process your request. Please try again later.");
+                            }
+                        });
+                    }
+                }
+            })
+        );
 
         res.status(200).send('EVENT_RECEIVED');
     } else {
-        res.sendStatus(404);
+        res.status(404).send('Not Found');
     }
 });
 
-async function handleMessage(senderId, receivedMessage) {
-    if (!conversationHistory[senderId]) {
-        conversationHistory[senderId] = [
-            {
-                role: 'system',
-                content: 'assistant'
-            }
-        ];
-    }
+function markAsSeen(recipientId) {
+    const requestBody = {
+        recipient: { id: recipientId },
+        sender_action: "mark_seen"
+    };
 
-    if (receivedMessage.attachments && receivedMessage.attachments[0].type === 'image') {
-        const imageUrl = receivedMessage.attachments[0].payload.url;
-        imageHistory[senderId] = imageUrl;
-        const response = {
-            text: 'Image received! Now, you can use the "/gemini" command with any prompt to analyze the image.'
-        };
-        await callSendAPI(senderId, response);
-        return;
-    }
-
-    if (receivedMessage.text) {
-        const messageText = receivedMessage.text.trim();
-
-        if (messageText.startsWith('/imagine ')) {
-            const prompt = messageText.slice(9).trim();
-            await generateImage(senderId, prompt);
-            return;
+    request.post({
+        url: 'https://graph.facebook.com/v21.0/me/messages',
+        qs: { access_token: PAGE_ACCESS_TOKEN },
+        json: requestBody
+    }, (error, response, body) => {
+        if (error) {
+            console.error('Unable to mark as seen:', error);
+        } else {
+            console.log('Message marked as seen:', body);
         }
-
-        if (messageText.startsWith('/gemini ')) {
-            const prompt = messageText.slice(8).trim();
-            const imageUrl = imageHistory[senderId];
-            if (imageUrl) {
-                await analyzeImageWithGemini(senderId, prompt, imageUrl);
-            } else {
-                const response = { text: "Please send an image first before using the '/gemini' command." };
-                await callSendAPI(senderId, response);
-            }
-            return;
-        }
-
-        if (messageText.startsWith('/play ')) {
-            const args = messageText.slice(6).trim().split(' ');
-            await playSong(senderId, args);
-            return;
-        }
-
-        conversationHistory[senderId].push({ role: 'user', content: messageText });
-
-        try {
-            const response = await gptx.ChatCompletion(conversationHistory[senderId]);
-
-            if (!response || response.trim() === '') {
-                const errorResponse = "Sorry, I didn't quite catch that. Could you please try asking again?";
-                await callSendAPI(senderId, { text: errorResponse });
-                return;
-            }
-
-            conversationHistory[senderId].push({ role: 'assistant', content: response });
-            await callSendAPI(senderId, { text: response });
-        } catch (error) {
-            console.error('Error with GPTx:', error.message);
-            const response = { text: "⛔ An error occurred while processing your request. Please try again." };
-            await callSendAPI(senderId, response);
-        }
-    } else {
-        const response = {
-            text: "I don't understand this message."
-        };
-        await callSendAPI(senderId, response);
-    }
+    });
 }
 
-async function generateImage(senderId, prompt) {
-    try {
-        const apiUrl = `https://imagine890.onrender.com/api/imagine?prompt=${encodeURIComponent(prompt)}`;
-        const { data } = await axios.get(apiUrl);
+async function callSendAPI(recipientId, messageData) {
+    const requestBody = {
+        recipient: { id: recipientId },
+        message: messageData,
+    };
 
-        if (data.fileName) {
-            const imageUrl = `https://imagine890.onrender.com/api/image/${data.fileName}`;
-            await callSendAPI(senderId, { attachment: { type: 'image', payload: { url: imageUrl } } });
-        } else {
-            await callSendAPI(senderId, { text: '⛔ Image generation failed.' });
-        }
+    try {
+        const response = await axios.post('https://graph.facebook.com/v15.0/me/messages', requestBody, {
+            params: { access_token: PAGE_ACCESS_TOKEN },
+        });
+        console.log('Message sent successfully:', response.data);
     } catch (error) {
-        console.error('Error generating image:', error);
-        await callSendAPI(senderId, { text: '⛔ There was an error processing your image generation request.' });
+        console.error('Error sending message:', error.response?.data || error.message);
     }
 }
 
 async function analyzeImageWithGemini(senderId, prompt, imageUrl) {
-    try {
-        const apiUrl = `https://joshweb.click/gemini?prompt=${encodeURIComponent(prompt)}&url=${encodeURIComponent(imageUrl)}`;
-        const { data } = await axios.get(apiUrl);
+    if (!prompt) {
+        sendMessage(senderId, "Please provide a prompt after the /gemini command. Example: /gemini Describe this image");
+        return;
+    }
 
-        if (data && data.gemini) {
-            await callSendAPI(senderId, { text: data.gemini });
+    try {
+        const apiUrl = `https://kaiz-apis.gleeze.com/api/gemini-vision?q=${encodeURIComponent(prompt)}&uid=${encodeURIComponent(senderId)}&imageUrl=${encodeURIComponent(imageUrl)}`;
+        const { data } = await axios.get(apiUrl);
+        if (data && data.response) {
+            sendMessage(senderId, data.response);
         } else {
-            await callSendAPI(senderId, { text: "Sorry, I couldn't retrieve information for this image." });
+            sendMessage(senderId, "Sorry, I couldn't retrieve information for this image. Please try again later.");
         }
     } catch (error) {
-        console.error('Error with Gemini API:', error);
-        await callSendAPI(senderId, { text: '⛔ There was an error processing your image analysis request.' });
+        console.error('Error with Gemini API:', error.message);
+        sendMessage(senderId, '⛔ There was an error processing your image analysis request. Please try again later.');
+    }
+}
+
+const processingState = {}; 
+
+async function fetchPinterestImages(senderId, query) {
+    if (processingState[senderId]) {
+        await callSendAPI(senderId, {
+            text: "⛔ Please wait while I process your previous request. I can only handle one request at a time."
+        });
+        return;
+    }
+
+    processingState[senderId] = true;
+
+    if (!query || query.trim().length === 0) {
+        await callSendAPI(senderId, {
+            text: "⛔ Please provide a search query to fetch Pinterest images.\n\nExample: /pinterest bini",
+        });
+
+        processingState[senderId] = false;
+        return;
+    }
+
+    try {
+        const apiUrl = `https://kaiz-apis.gleeze.com/api/pinterest?search=${encodeURIComponent(query)}`;
+        const response = await axios.get(apiUrl);
+
+        if (response.data && response.data.data && response.data.data.length > 0) {
+            const images = response.data.data.slice(0, 15);
+
+            for (const imageUrl of images) {
+                if (imageUrl) {
+                    await callSendAPI(senderId, {
+                        attachment: {
+                            type: 'image',
+                            payload: { url: imageUrl, is_reusable: true }
+                        }
+                    });
+                }
+            }
+
+            await callSendAPI(senderId, { text: "That's all the images I could find!" });
+
+        } else {
+            await callSendAPI(senderId, {
+                text: "Sorry, no images were found for that search query."
+            });
+        }
+    } catch (error) {
+        console.error('Error fetching Pinterest images:', error);
+        await callSendAPI(senderId, {
+            text: "⛔ There was an error processing your Pinterest search request. Please try again later."
+        });
+    } finally {
+        processingState[senderId] = false;
     }
 }
 
 async function playSong(senderId, args) {
+    if (!args || args.length === 0) {
+        await callSendAPI(senderId, {
+            text: "Please provide a song name or query to search for on Spotify.\n\nExample: Pantropiko",
+        });
+        return;
+    }
+
     try {
         const { data } = await axios.get(`https://hiroshi-api.onrender.com/tiktok/spotify?search=${encodeURIComponent(args.join(' '))}`);
         const link = data[0]?.download;
@@ -190,20 +231,76 @@ async function playSong(senderId, args) {
     }
 }
 
-async function callSendAPI(senderId, response) {
-    const requestBody = {
-        recipient: { id: senderId },
-        message: response
-    };
+async function generateImage(senderId, prompt) {
+    if (!prompt || prompt.trim() === "") {
+        await callSendAPI(senderId, {
+            text: "Please provide a prompt for the image generation.",
+        });
+        return;
+    }
 
     try {
-        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, requestBody);
-        console.log('Message sent!');
-    } catch (err) {
-        console.error('Unable to send message:', err);
+        const apiUrl = `https://kaiz-apis.gleeze.com/api/imagine?prompt=${encodeURIComponent(prompt)}`;
+
+        await callSendAPI(senderId, {
+            attachment: {
+                type: "image",
+                payload: {
+                    url: apiUrl,
+                    is_reusable: true,
+                },
+            },
+        });
+    } catch (error) {
+        console.error("Error generating image:", error);
+        await callSendAPI(senderId, {
+            text: "⛔ There was an error processing your image generation request. Please try again later.",
+        });
     }
 }
 
+function sendMessage(recipientId, messageText) {
+    const MAX_CHAR_LIMIT = 2000;
+
+    const sendChunk = (chunk) => {
+        const requestBody = { recipient: { id: recipientId }, message: { text: chunk } };
+
+        request.post({
+            url: 'https://graph.facebook.com/v21.0/me/messages',
+            qs: { access_token: PAGE_ACCESS_TOKEN },
+            json: requestBody
+        }, (error, response, body) => {
+            if (error) {
+                console.error('Unable to send message:', error);
+            } else {
+                console.log('Message sent successfully:', body);
+            }
+        });
+    };
+
+    if (messageText.length > MAX_CHAR_LIMIT) {
+        const chunks = [];
+        let start = 0;
+        while (start < messageText.length) {
+            let end = Math.min(start + MAX_CHAR_LIMIT, messageText.length);
+            if (end < messageText.length && messageText[end] !== ' ') {
+                end = messageText.lastIndexOf(' ', end);
+            }
+            if (end <= start) end = Math.min(start + MAX_CHAR_LIMIT, messageText.length);
+
+            chunks.push(messageText.substring(start, end).trim());
+            start = end + 1;
+        }
+
+        chunks.forEach((chunk, index) => {
+            setTimeout(() => sendChunk(chunk), index * 1000);
+        });
+    } else {
+        sendChunk(messageText);
+    }
+}
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
