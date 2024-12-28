@@ -143,62 +143,6 @@ async function analyzeImageWithGemini(senderId, prompt, imageUrl) {
     }
 }
 
-const processingState = {}; 
-
-async function fetchPinterestImages(senderId, query) {
-    if (processingState[senderId]) {
-        await callSendAPI(senderId, {
-            text: "⛔ Please wait while I process your previous request. I can only handle one request at a time."
-        });
-        return;
-    }
-
-    processingState[senderId] = true;
-
-    if (!query || query.trim().length === 0) {
-        await callSendAPI(senderId, {
-            text: "⛔ Please provide a search query to fetch Pinterest images.\n\nExample: /pinterest bini",
-        });
-
-        processingState[senderId] = false;
-        return;
-    }
-
-    try {
-        const apiUrl = `https://kaiz-apis.gleeze.com/api/pinterest?search=${encodeURIComponent(query)}`;
-        const response = await axios.get(apiUrl);
-
-        if (response.data && response.data.data && response.data.data.length > 0) {
-            const images = response.data.data.slice(0, 15);
-
-            for (const imageUrl of images) {
-                if (imageUrl) {
-                    await callSendAPI(senderId, {
-                        attachment: {
-                            type: 'image',
-                            payload: { url: imageUrl, is_reusable: true }
-                        }
-                    });
-                }
-            }
-
-            await callSendAPI(senderId, { text: "That's all the images I could find!" });
-
-        } else {
-            await callSendAPI(senderId, {
-                text: "Sorry, no images were found for that search query."
-            });
-        }
-    } catch (error) {
-        console.error('Error fetching Pinterest images:', error);
-        await callSendAPI(senderId, {
-            text: "⛔ There was an error processing your Pinterest search request. Please try again later."
-        });
-    } finally {
-        processingState[senderId] = false;
-    }
-}
-
 async function playSong(senderId, args) {
     if (!args || args.length === 0) {
         await callSendAPI(senderId, {
