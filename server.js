@@ -8,9 +8,14 @@ const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = "lorex";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const AUTOCASS_URL = process.env.AUTOCASS || "https://cassidynica.onrender.com";
+const PREF = "!";
+
+// Store autocass status for each sender (similar to threadID mapping)
+const mappings = new Map();
 
 app.use(bodyParser.json());
-app.use(express.static("public")); // Serve static files from "public" folder
+app.use(express.static("public"));
 
 // Webhook verification
 app.get("/webhook", (req, res) => {
@@ -38,15 +43,23 @@ app.post("/webhook", async (req, res) => {
             if (event.message && event.message.text) {
                 let userMessage = event.message.text;
 
-                // Forward to external API
-                try {
-                    let response = await axios.get(`https://gpt4o.gleeze.com/pagebot?prompt=${encodeURIComponent(userMessage)}&uid=${senderId}`);
-                    let botReply = response.data.response;
-
-                    // Send response back to user
-                    await sendMessage(senderId, botReply);
-                } catch (error) {
-                    console.error("Error forwarding message:", error);
+                // Handle autocass toggle command
+                if (userMessage.startsWith(`${PREF}autocass`)) {
+                    const args = userMessage.split(" ");
+                    let choice = args[1] === "on" 
+                        ? true 
+                        : args[1] === "off" 
+                        ? false 
+                        : mappings.get(senderId) 
+                        ? !mappings.get(senderId) 
+                        : true;
+                    
+                    mappings.set(senderId, choice);
+                    await sendMessage(senderId, `✅ ${choice ? "Enabled" : "Disabled"} successfully!`);
+                }
+                // Process message if autocass is enabled
+                else if (mappings.get(senderId)) {
+                    await processAutocass(senderId, userMessage);
                 }
             }
         });
@@ -57,6 +70,41 @@ app.post("/webhook", async (req, res) => {
     }
 });
 
+// Autocass processing function
+async function processAutocass(senderId, message) {
+    try {
+        const res = await axios.get(`${AUTOCASS_URL}/postWReply`, {
+            params: {
+                body: message,
+                senderID: senderId,
+                prefixes: [PREF],
+                password: null,
+            },
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+                Referer: AUTOCASS_URL,
+                Connection: "keep-alive",
+                DNT: "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Upgrade-Insecure-Requests": "1",
+            }
+        });
+
+        const { result, status } = res.data;
+        
+        if (status !== "fail" && result.body) {
+            await sendMessage(senderId, result.body);
+        }
+    } catch (error) {
+        console.error("Error in autocass processing:", error);
+    }
+}
+
 // Send message to user
 async function sendMessage(senderId, text) {
     let url = `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
@@ -66,7 +114,9 @@ async function sendMessage(senderId, text) {
         message: { text: text },
     };
 
-    await axios.post(url, messageData).catch((error) => console.error("Error sending message:", error.response.data));
+    await axios.post(url, messageData).catch((error) => 
+        console.error("Error sending message:", error.response?.data || error)
+    );
 }
 
 // Serve the HTML file for uptime monitoring
