@@ -1,5 +1,6 @@
 const { execSync } = require("child_process");
 const path = require("path");
+const fs = require("fs");
 
 // Auto-install dependencies
 function installDependencies() {
@@ -29,7 +30,6 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
 const request = require("request");
-const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
