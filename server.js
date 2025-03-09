@@ -1,16 +1,43 @@
+const { execSync } = require("child_process");
+const path = require("path");
+
+// Auto-install dependencies
+function installDependencies() {
+  console.log("Checking and installing dependencies...");
+  const nodeModulesPath = path.join(__dirname, "node_modules");
+
+  // Install dependencies if node_modules doesn’t exist
+  if (!fs.existsSync(nodeModulesPath)) {
+    try {
+      console.log("Installing dependencies...");
+      execSync("npm install", { stdio: "inherit" });
+      console.log("Dependencies installed successfully.");
+    } catch (error) {
+      console.error("Failed to install dependencies:", error.message);
+      process.exit(1);
+    }
+  } else {
+    console.log("Dependencies already installed.");
+  }
+}
+
+// Run the install check before starting the server
+installDependencies();
+
+// Now load the server code
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
-const path = require("path");
 const request = require("request");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = "lorex";
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your-page-access-token-here"; // Fallback for testing
-const AUTOCASS_URL = process.env.AUTOCASS || "https://cassidynica.onrender.com";
-const PREF = "!";
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your-page-access-token-here";
+const AUTOCASS_URL = process.env.AUTOCASS || "https://cassredux-production.up.railway.app";
+const PREF = "+";
 
 // Initialize APIPage class
 const apiPage = new APIPage(PAGE_ACCESS_TOKEN);
@@ -128,7 +155,7 @@ async function processAutocass(senderId, message) {
       await apiPage.sendMessage(result.body, senderId);
     } else {
       console.log(`No valid reply from autocass - status: ${status}, result: ${JSON.stringify(result)}`);
-      await apiPage.sendMessage("Sorry, I couldn’t process that right now.", senderId);
+      await apiPage.sendMessage("", senderId);
     }
   } catch (error) {
     console.error("Error in autocass processing:", error.message, error.response?.data);
