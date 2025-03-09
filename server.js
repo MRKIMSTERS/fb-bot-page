@@ -8,8 +8,8 @@ const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = "lorex";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your-page-access-token-here"; // Add fallback for testing
-const AUTOCASS_URL = process.env.AUTOCASS || "https://cassidynica.onrender.com";
-const PREF = "!";
+const AUTOCASS_URL = process.env.AUTOCASS || "https://cassredux-production.up.railway.app";
+const PREF = "+";
 
 app.use(bodyParser.json());
 app.use(express.static("public"));
