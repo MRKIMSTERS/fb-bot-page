@@ -7,9 +7,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = "lorex";
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const AUTOCASS_URL = process.env.AUTOCASS || "https://cassredux-production.up.railway.app";
-const PREF = "+";
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your-page-access-token-here"; // Add fallback for testing
+const AUTOCASS_URL = process.env.AUTOCASS || "https://cassidynica.onrender.com";
+const PREF = "!";
 
 app.use(bodyParser.json());
 app.use(express.static("public"));
@@ -33,17 +33,16 @@ app.post("/webhook", async (req, res) => {
     let body = req.body;
 
     if (body.object === "page") {
-        body.entry.forEach(async (entry) => {
+        for (const entry of body.entry) {
             let event = entry.messaging[0];
             let senderId = event.sender.id;
 
             if (event.message && event.message.text) {
                 let userMessage = event.message.text;
-                // Process every message with autocass
+                console.log(`Received message from ${senderId}: ${userMessage}`);
                 await processAutocass(senderId, userMessage);
             }
-        });
-
+        }
         res.status(200).send("EVENT_RECEIVED");
     } else {
         res.status(404).send();
@@ -53,6 +52,7 @@ app.post("/webhook", async (req, res) => {
 // Autocass processing function
 async function processAutocass(senderId, message) {
     try {
+        console.log(`Processing autocass for sender ${senderId} with message: ${message}`);
         const res = await axios.get(`${AUTOCASS_URL}/postWReply`, {
             params: {
                 body: message,
@@ -68,35 +68,40 @@ async function processAutocass(senderId, message) {
                 Referer: AUTOCASS_URL,
                 Connection: "keep-alive",
                 DNT: "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Upgrade-Insecure-Requests": "1",
-            }
+            },
+            timeout: 10000 // Add timeout to prevent hanging
         });
 
+        console.log("Autocass response:", res.data);
         const { result, status } = res.data;
-        
-        if (status !== "fail" && result.body) {
+
+        if (status !== "fail" && result && result.body) {
             await sendMessage(senderId, result.body);
+        } else {
+            console.log(`No valid reply from autocass - status: ${status}, result: ${JSON.stringify(result)}`);
+            await sendMessage(senderId, "Sorry, I couldn’t process that right now.");
         }
     } catch (error) {
-        console.error("Error in autocass processing:", error);
+        console.error("Error in autocass processing:", error.message, error.response?.data);
+        await sendMessage(senderId, "An error occurred. Please try again.");
     }
 }
 
 // Send message to user
 async function sendMessage(senderId, text) {
-    let url = `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+    const url = `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
     
-    let messageData = {
+    const messageData = {
         recipient: { id: senderId },
         message: { text: text },
     };
 
-    await axios.post(url, messageData).catch((error) => 
-        console.error("Error sending message:", error.response?.data || error)
-    );
+    try {
+        const response = await axios.post(url, messageData);
+        console.log(`Message sent to ${senderId}: ${text}`);
+    } catch (error) {
+        console.error("Error sending message:", error.response?.data || error.message);
+    }
 }
 
 // Serve the HTML file for uptime monitoring
