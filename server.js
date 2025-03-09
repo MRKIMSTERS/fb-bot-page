@@ -7,7 +7,6 @@ function installDependencies() {
   console.log("Checking and installing dependencies...");
   const nodeModulesPath = path.join(__dirname, "node_modules");
 
-  // Install dependencies if node_modules doesn’t exist
   if (!fs.existsSync(nodeModulesPath)) {
     try {
       console.log("Installing dependencies...");
@@ -25,7 +24,7 @@ function installDependencies() {
 // Run the install check before starting the server
 installDependencies();
 
-// Now load the server code
+// Load dependencies
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
@@ -36,16 +35,10 @@ const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = "lorex";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "your-page-access-token-here";
-const AUTOCASS_URL = process.env.AUTOCASS || "https://cassredux-production.up.railway.app";
-const PREF = "+";
+const AUTOCASS_URL = process.env.AUTOCASS || "https://cassidynica.onrender.com";
+const PREF = "!";
 
-// Initialize APIPage class
-const apiPage = new APIPage(PAGE_ACCESS_TOKEN);
-
-app.use(bodyParser.json());
-app.use(express.static("public"));
-
-// APIPage class definition
+// Define APIPage class before using it
 class APIPage {
   constructor(pageAccessToken) {
     this.token = pageAccessToken;
@@ -89,6 +82,12 @@ class APIPage {
     });
   }
 }
+
+// Initialize APIPage class after its definition
+const apiPage = new APIPage(PAGE_ACCESS_TOKEN);
+
+app.use(bodyParser.json());
+app.use(express.static("public"));
 
 // Webhook verification
 app.get("/webhook", (req, res) => {
@@ -155,7 +154,7 @@ async function processAutocass(senderId, message) {
       await apiPage.sendMessage(result.body, senderId);
     } else {
       console.log(`No valid reply from autocass - status: ${status}, result: ${JSON.stringify(result)}`);
-      await apiPage.sendMessage("", senderId);
+      await apiPage.sendMessage("Sorry, I couldn’t process that right now.", senderId);
     }
   } catch (error) {
     console.error("Error in autocass processing:", error.message, error.response?.data);
