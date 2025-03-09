@@ -8,11 +8,8 @@ const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = "lorex";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const AUTOCASS_URL = process.env.AUTOCASS || "https://cassidynica.onrender.com";
-const PREF = "!";
-
-// Store autocass status for each sender (similar to threadID mapping)
-const mappings = new Map();
+const AUTOCASS_URL = process.env.AUTOCASS || "https://cassredux-production.up.railway.app";
+const PREF = "+";
 
 app.use(bodyParser.json());
 app.use(express.static("public"));
@@ -42,25 +39,8 @@ app.post("/webhook", async (req, res) => {
 
             if (event.message && event.message.text) {
                 let userMessage = event.message.text;
-
-                // Handle autocass toggle command
-                if (userMessage.startsWith(`${PREF}autocass`)) {
-                    const args = userMessage.split(" ");
-                    let choice = args[1] === "on" 
-                        ? true 
-                        : args[1] === "off" 
-                        ? false 
-                        : mappings.get(senderId) 
-                        ? !mappings.get(senderId) 
-                        : true;
-                    
-                    mappings.set(senderId, choice);
-                    await sendMessage(senderId, `✅ ${choice ? "Enabled" : "Disabled"} successfully!`);
-                }
-                // Process message if autocass is enabled
-                else if (mappings.get(senderId)) {
-                    await processAutocass(senderId, userMessage);
-                }
+                // Process every message with autocass
+                await processAutocass(senderId, userMessage);
             }
         });
 
